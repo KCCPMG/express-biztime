@@ -1,6 +1,7 @@
 
-const pg = require('pg');
+// const pg = require('pg');
 const express = require('express')
+const slugify = require('slugify');
 const router = express.Router();
 
 const ExpressError = require('../expressError');
@@ -16,23 +17,39 @@ router.get('/', async (req, res, next) => {
 router.get('/:code', async (req, res, next) => {
 
   try {
-    let companyQuery = await db.query(`SELECT code, name, description
-                                      FROM companies
-                                      WHERE code=$1`, [req.params.code]);
 
-    if (companyQuery.rows.length == 0) {
+    let [fullQuery, invoiceQuery] = await Promise.all([
+                                  db.query(`SELECT comp.code, comp.name, 
+                                  comp.description, ind.industry
+                                  FROM companies as comp
+                                  LEFT JOIN company_industries as comp_ind
+                                  ON comp.code = comp_ind.company_code
+                                  LEFT JOIN industries as ind
+                                  ON comp_ind.industry_code = ind.code  
+                                  WHERE comp.code=$1`, 
+                                  [req.params.code]),
+                                  db.query(`SELECT id, comp_code, amt, paid, add_date, paid_date
+                                  FROM invoices
+                                  WHERE comp_code=$1`,
+                                  [req.params.code])
+                                ]);
+
+    if (fullQuery.rows.length == 0) {
       return next(new ExpressError("Not found", 404));
     } else {
-
-      let invoiceQuery = await db.query(`SELECT id, comp_code, amt, paid, add_date, paid_date
-                                         FROM invoices
-                                         WHERE comp_code=$1`,
-                                         [req.params.code])
-
-      companyQuery.rows[0].invoices = invoiceQuery.rows;
-
-      return res.json({company: companyQuery.rows[0]})
+      let code = fullQuery.rows[0].code;
+      let name = fullQuery.rows[0].name;
+      let description = fullQuery.rows[0].description;
+      let industries = fullQuery.rows.map(r => r.industry)
+      res.json({company: {
+        code,
+        name,
+        description,
+        industries,
+        invoices: invoiceQuery.rows
+      }})
     }
+
   } catch(e) {
     return next(new ExpressError(e.message, 404));
   }
@@ -42,14 +59,14 @@ router.get('/:code', async (req, res, next) => {
 
 router.post('/', async (req, res, next) => {
 
-  const {code, name, description} = req.body
+  const {name, description} = req.body
 
   try {
     let result = await db.query(`INSERT INTO companies 
                                 (code, name, description)
                                 VALUES ($1, $2, $3)
                                 RETURNING code, name, description`,
-                                [code, name, description]);
+                                [slugify(name), name, description]);
     res.json({company: result.rows[0]});
   } catch(e) {
     return next(new ExpressError(e.message, 404))
@@ -89,7 +106,8 @@ router.delete('/:code', async (req, res, next) => {
 
     let companyQuery = await db.query(`SELECT code, name, description
                                       FROM companies
-                                      WHERE code=$1`, [req.params.code]);
+                                      WHERE code=$1`, 
+                                      [req.params.code]);
 
     if (companyQuery.rows.length == 0) {
       return next(new ExpressError("Not found", 404));

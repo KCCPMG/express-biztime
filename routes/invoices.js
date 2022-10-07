@@ -1,4 +1,4 @@
-const pg = require('pg');
+// const pg = require('pg');
 const express = require('express')
 const router = express.Router();
 
@@ -23,6 +23,7 @@ router.get('/:id', async (req, res, next) => {
                                 WHERE id=$1`,
                                 [req.params.id])
 
+                                
     if (query.rows.length == 0) {
       return next(new ExpressError("Could not find invoice", 404))
     } else return res.json({invoice: query.rows[0]})
@@ -36,6 +37,7 @@ router.get('/:id', async (req, res, next) => {
 router.post('/', async (req, res, next) => {
   try {
     const {comp_code, amt} = req.body;
+    
 
     let query = await db.query(`INSERT INTO invoices
                                 (comp_code, amt)
@@ -51,25 +53,45 @@ router.post('/', async (req, res, next) => {
 
 router.put('/:id', async (req, res, next) => {
 
-  const { amt } = req.body;
+  const { amt, paid } = req.body;
 
   try {
-    let query = await db.query(`SELECT id, comp_code, amt, paid, add_date, paid_date
+    let original = await db.query(`SELECT id, comp_code, amt, paid, add_date, paid_date
                                 FROM invoices
                                 WHERE id=$1`,
                                 [req.params.id])
 
-    if (query.rows.length == 0) {
+    if (original.rows.length == 0) {
       return next(new ExpressError("Could not find invoice", 404))
     } else {
 
-      let query = await db.query(`UPDATE invoices
-                                  SET amt=$1
-                                  WHERE id=$2
-                                  RETURNING id, comp_code, amt, paid, add_date, paid_date`,
-                                  [amt, req.params.id])
+      let update;
 
-      return res.json({invoice: query.rows[0]})
+      if ((original.rows[0].paid == true && paid == true) || (original.rows[0].paid == false && paid == false)) {
+        update = await db.query(`UPDATE invoices
+                                    SET amt=$1
+                                    WHERE id=$2
+                                    RETURNING id, comp_code, amt, paid, add_date, paid_date`,
+                                    [amt, req.params.id])
+      } else if (original.rows[0].paid == true && paid == false) {
+        update = await db.query(`UPDATE invoices
+                                    SET amt=$1, paid=$2, paid_date=$3
+                                    WHERE id=$4
+                                    RETURNING id, comp_code, amt, paid, add_date, paid_date`,
+                                    [amt, paid, null, req.params.id])
+      } else {
+        update = await db.query(`UPDATE invoices
+                                    SET amt=$1, paid=$2, paid_date=$3
+                                    WHERE id=$4
+                                    RETURNING id, comp_code, amt, paid, add_date, paid_date`,
+                                    [amt, paid, new Date(), req.params.id])
+      }
+
+      if (update.rows.length == 0) {
+        return next(new ExpressError("Could not update invoice", 404))
+      }
+
+      return res.json({invoice: update.rows[0]})
     }
   } catch(e) {
     return next(new ExpressError(e.message, 404));
